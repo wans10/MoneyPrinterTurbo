@@ -477,6 +477,25 @@ if not config.app.get("hide_config", False):
                 tr("Pixabay API Key"), value=pixabay_api_key, type="password"
             )
             save_keys_to_config("pixabay_api_keys", pixabay_api_key)
+            
+            # LLM Hub AI Video Generation Settings
+            st.write(tr("AI Video Generation Settings"))
+            
+            saved_llmhub_api_key = config.llmhub.get("api_key", "")
+            llmhub_api_key = st.text_input(
+                tr("LLM Hub API Key"),
+                value=saved_llmhub_api_key,
+                type="password",
+                help="https://www.llmhub.com.cn"
+            )
+            config.llmhub["api_key"] = llmhub_api_key
+            
+            saved_llmhub_base_url = config.llmhub.get("base_url", "https://api.llmhub.com.cn/v1")
+            llmhub_base_url = st.text_input(
+                tr("LLM Hub Base URL"),
+                value=saved_llmhub_base_url,
+            )
+            config.llmhub["base_url"] = llmhub_base_url
 
 llm_provider = config.app.get("llm_provider", "").lower()
 panel = st.columns(3)
@@ -584,6 +603,40 @@ with middle_panel:
                 type=["mp4", "mov", "avi", "flv", "mkv", "jpg", "jpeg", "png"],
                 accept_multiple_files=True,
             )
+
+        # AI Video Generation Model Selection
+        video_gen_models = [
+            (tr("No AI Generation"), "none"),
+            ("Sora 2", "sora-2"),
+            ("Sora 2 Pro", "sora-2-pro"),
+            ("Veo 3.1", "veo-3.1"),
+        ]
+        
+        saved_video_gen_model = config.llmhub.get("video_model", "none")
+        saved_video_gen_model_index = 0
+        for i, (_, model_value) in enumerate(video_gen_models):
+            if model_value == saved_video_gen_model:
+                saved_video_gen_model_index = i
+                break
+        
+        selected_gen_model_index = st.selectbox(
+            tr("AI Video Generation Model"),
+            options=range(len(video_gen_models)),
+            format_func=lambda x: video_gen_models[x][0],
+            index=saved_video_gen_model_index,
+        )
+        params.video_gen_model = video_gen_models[selected_gen_model_index][1]
+        config.llmhub["video_model"] = params.video_gen_model
+        
+        # Show duration slider when AI generation is enabled
+        if params.video_gen_model != "none":
+            params.video_gen_duration = st.slider(
+                tr("AI Video Duration (seconds)"),
+                min_value=5,
+                max_value=20,
+                value=5,
+            )
+            st.info(tr("AI video generation may take 30 seconds to several minutes per clip"))
 
         selected_index = st.selectbox(
             tr("Video Concat Mode"),

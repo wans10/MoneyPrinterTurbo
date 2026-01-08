@@ -117,6 +117,16 @@
     "Pixabay API Key added successfully": "Pixabay API Key 添加成功",
     "Select Pixabay API Key to delete": "选择要删除的 Pixabay API Key",
     "Delete Selected Pixabay API Key": "删除选定的 Pixabay API Key",
-    "Pixabay API Key deleted successfully": "Pixabay API Key 删除成功"
+    "Pixabay API Key deleted successfully": "Pixabay API Key 删除成功",
+    "AI Video Generation Settings": "**AI 视频生成设置**",
+    "LLM Hub API Key": "LLM Hub API密钥 ([点击获取](https://www.llmhub.com.cn))",
+    "LLM Hub Base URL": "LLM Hub Base URL",
+    "AI Video Generation Model": "AI 视频生成模型",
+    "No AI Generation": "不使用 AI 生成",
+    "AI Video Duration (seconds)": "AI 视频时长（秒）",
+    "AI video generation may take 30 seconds to several minutes per clip": "AI 视频生成可能需要 30 秒到数分钟每个片段",
+    "Custom Position (% from top)": "自定义位置（从顶部算起的百分比）",
+    "Please enter a value between 0 and 100": "请输入 0 到 100 之间的值",
+    "Please enter a valid number": "请输入有效的数字"
   }
 }

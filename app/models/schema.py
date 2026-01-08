@@ -42,6 +42,14 @@ class VideoAspect(str, Enum):
         return 1080, 1920
 
 
+class VideoGenModel(str, Enum):
+    """AI 视频生成模型"""
+    none = "none"              # 不使用 AI 生成
+    sora_2 = "sora-2"          # OpenAI Sora 2
+    sora_2_pro = "sora-2-pro"  # OpenAI Sora 2 Pro
+    veo_3_1 = "veo-3.1"        # Google Veo 3.1
+
+
 class _Config:
     arbitrary_types_allowed = True
 
@@ -78,6 +86,11 @@ class VideoParams(BaseModel):
     video_count: Optional[int] = 1
 
     video_source: Optional[str] = "pexels"
+    
+    # AI Video Generation Settings (via LLM Hub)
+    video_gen_model: Optional[str] = "none"  # none, sora-2, sora-2-pro, veo-3.1
+    video_gen_duration: Optional[int] = 5    # 5-20 seconds per AI-generated clip
+    
     video_materials: Optional[List[MaterialInfo]] = (
         None  # Materials used to generate the video
     )

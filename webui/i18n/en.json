@@ -117,6 +117,16 @@
     "Pixabay API Key added successfully": "Pixabay API Key added successfully",
     "Select Pixabay API Key to delete": "Select Pixabay API Key to delete",
     "Delete Selected Pixabay API Key": "Delete Selected Pixabay API Key",
-    "Pixabay API Key deleted successfully": "Pixabay API Key deleted successfully"
+    "Pixabay API Key deleted successfully": "Pixabay API Key deleted successfully",
+    "AI Video Generation Settings": "**AI Video Generation Settings**",
+    "LLM Hub API Key": "LLM Hub API Key ([Get API Key](https://www.llmhub.com.cn))",
+    "LLM Hub Base URL": "LLM Hub Base URL",
+    "AI Video Generation Model": "AI Video Generation Model",
+    "No AI Generation": "No AI Generation",
+    "AI Video Duration (seconds)": "AI Video Duration (seconds)",
+    "AI video generation may take 30 seconds to several minutes per clip": "AI video generation may take 30 seconds to several minutes per clip",
+    "Custom Position (% from top)": "Custom Position (% from top)",
+    "Please enter a value between 0 and 100": "Please enter a value between 0 and 100",
+    "Please enter a valid number": "Please enter a valid number"
   }
 }

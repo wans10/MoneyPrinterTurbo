@@ -216,6 +216,14 @@ speech_region = ""
 # Get your API key at https://siliconflow.cn
 api_key = ""
 
+[llmhub]
+# LLM Hub API Configuration for AI Video Generation
+# Support Sora 2, Sora 2 Pro, Veo 3.1 models
+# Get your API key at https://www.llmhub.com.cn
+# 用户可以在 WebUI 中配置 API Key 和选择模型
+api_key = ""
+base_url = "https://api.llmhub.com.cn/v1"
+
 [ui]
 # UI related settings
 # 是否隐藏日志信息

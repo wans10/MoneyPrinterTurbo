@@ -8,7 +8,7 @@ from loguru import logger
 from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
-from app.services import llm, material, subtitle, video, voice
+from app.services import llm, material, subtitle, video, video_gen, voice
 from app.services import state as sm
 from app.utils import utils
 
@@ -172,6 +172,35 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             )
             return None
         return [material_info.url for material_info in materials]
+    
+    # AI Video Generation via LLM Hub (Sora 2, Veo 3.1)
+    elif params.video_gen_model and params.video_gen_model != "none":
+        logger.info(f"\n\n## generating videos with AI model: {params.video_gen_model}")
+        
+        # Convert video terms to generation prompts
+        prompts = _prepare_video_prompts(video_terms, params)
+        if not prompts:
+            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+            logger.error("no valid prompts for AI video generation.")
+            return None
+        
+        generated_videos = video_gen.generate_videos_from_prompts(
+            task_id=task_id,
+            prompts=prompts,
+            model=params.video_gen_model,
+            aspect=params.video_aspect,
+            duration=params.video_gen_duration or 5,
+        )
+        
+        if not generated_videos:
+            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+            logger.error(
+                f"failed to generate videos with {params.video_gen_model}. "
+                "Please check your LLM Hub API key and account balance."
+            )
+            return None
+        return generated_videos
+    
     else:
         logger.info(f"\n\n## downloading videos from {params.video_source}")
         downloaded_videos = material.download_videos(
@@ -190,6 +219,23 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             )
             return None
         return downloaded_videos
+
+
+def _prepare_video_prompts(video_terms, params):
+    """
+    Convert video search terms to AI video generation prompts.
+    Each term will be enhanced with additional context for better video quality.
+    """
+    if not video_terms:
+        return []
+    
+    prompts = []
+    for term in video_terms:
+        # Enhance the term with cinematic quality keywords
+        prompt = f"A professional video about {term}, high quality, cinematic lighting, smooth motion"
+        prompts.append(prompt)
+    
+    return prompts
 
 
 def generate_final_videos(
