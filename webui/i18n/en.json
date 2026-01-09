@@ -127,6 +127,8 @@
     "AI video generation may take 30 seconds to several minutes per clip": "AI video generation may take 30 seconds to several minutes per clip",
     "Custom Position (% from top)": "Custom Position (% from top)",
     "Please enter a value between 0 and 100": "Please enter a value between 0 and 100",
-    "Please enter a valid number": "Please enter a valid number"
+    "Please enter a valid number": "Please enter a valid number",
+    "Upload Images for Image-to-Video (Optional)": "Upload Images for Image-to-Video (Optional)",
+    "Video Resolution": "Video Resolution"
   }
 }

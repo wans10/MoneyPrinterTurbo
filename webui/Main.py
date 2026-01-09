@@ -574,43 +574,15 @@ with middle_panel:
             (tr("Sequential"), "sequential"),
             (tr("Random"), "random"),
         ]
-        video_sources = [
-            (tr("Pexels"), "pexels"),
-            (tr("Pixabay"), "pixabay"),
-            (tr("Local file"), "local"),
-            (tr("TikTok"), "douyin"),
-            (tr("Bilibili"), "bilibili"),
-            (tr("Xiaohongshu"), "xiaohongshu"),
-        ]
-
-        saved_video_source_name = config.app.get("video_source", "pexels")
-        saved_video_source_index = [v[1] for v in video_sources].index(
-            saved_video_source_name
-        )
-
-        selected_index = st.selectbox(
-            tr("Video Source"),
-            options=range(len(video_sources)),
-            format_func=lambda x: video_sources[x][0],
-            index=saved_video_source_index,
-        )
-        params.video_source = video_sources[selected_index][1]
-        config.app["video_source"] = params.video_source
-
-        if params.video_source == "local":
-            uploaded_files = st.file_uploader(
-                "Upload Local Files",
-                type=["mp4", "mov", "avi", "flv", "mkv", "jpg", "jpeg", "png"],
-                accept_multiple_files=True,
-            )
-
-        # AI Video Generation Model Selection
-        video_gen_models = [
-            (tr("No AI Generation"), "none"),
-            ("Sora 2", "sora-2"),
-            ("Sora 2 Pro", "sora-2-pro"),
-            ("Veo 3.1", "veo-3.1"),
-        ]
+        
+        # AI Video Generation Model Selection - 动态获取模型列表
+        from app.services import video_gen as vg
+        
+        # 获取动态模型列表
+        dynamic_models = vg.get_available_video_models()
+        video_gen_models = [(tr("No AI Generation"), "none")]
+        for m in dynamic_models:
+            video_gen_models.append((m["name"], m["id"]))
         
         saved_video_gen_model = config.llmhub.get("video_model", "none")
         saved_video_gen_model_index = 0
@@ -628,8 +600,31 @@ with middle_panel:
         params.video_gen_model = video_gen_models[selected_gen_model_index][1]
         config.llmhub["video_model"] = params.video_gen_model
         
-        # Show duration slider when AI generation is enabled
+        # 如果选择了 AI 模型，显示 AI 相关设置
         if params.video_gen_model != "none":
+            # 分辨率选择
+            resolution_options = [
+                ("720p (1280x720)", "720p"),
+                ("1080p (1920x1080)", "1080p"),
+                ("4K (3840x2160)", "4k"),
+            ]
+            saved_resolution = config.llmhub.get("video_resolution", "1080p")
+            saved_resolution_index = 1  # 默认 1080p
+            for i, (_, res) in enumerate(resolution_options):
+                if res == saved_resolution:
+                    saved_resolution_index = i
+                    break
+            
+            selected_res_index = st.selectbox(
+                tr("Video Resolution"),
+                options=range(len(resolution_options)),
+                format_func=lambda x: resolution_options[x][0],
+                index=saved_resolution_index,
+            )
+            params.video_gen_resolution = resolution_options[selected_res_index][1]
+            config.llmhub["video_resolution"] = params.video_gen_resolution
+            
+            # 视频时长
             params.video_gen_duration = st.slider(
                 tr("AI Video Duration (seconds)"),
                 min_value=5,
@@ -637,6 +632,51 @@ with middle_panel:
                 value=5,
             )
             st.info(tr("AI video generation may take 30 seconds to several minutes per clip"))
+            
+            # AI 模式下可以选择上传图片进行 Image-to-Video
+            uploaded_files = st.file_uploader(
+                tr("Upload Images for Image-to-Video (Optional)"),
+                type=["jpg", "jpeg", "png", "webp"],
+                accept_multiple_files=True,
+            )
+            if uploaded_files:
+                params.video_source = "local"  # 标记为本地，用于传递图片
+            else:
+                params.video_source = "ai_generated"  # 纯文本生成
+        
+        # 只有不使用 AI 时才显示视频来源选择
+        else:
+            video_sources = [
+                (tr("Pexels"), "pexels"),
+                (tr("Pixabay"), "pixabay"),
+                (tr("Local file"), "local"),
+                (tr("TikTok"), "douyin"),
+                (tr("Bilibili"), "bilibili"),
+                (tr("Xiaohongshu"), "xiaohongshu"),
+            ]
+
+            saved_video_source_name = config.app.get("video_source", "pexels")
+            saved_video_source_index = 0
+            for i, (_, source_value) in enumerate(video_sources):
+                if source_value == saved_video_source_name:
+                    saved_video_source_index = i
+                    break
+
+            selected_index = st.selectbox(
+                tr("Video Source"),
+                options=range(len(video_sources)),
+                format_func=lambda x: video_sources[x][0],
+                index=saved_video_source_index,
+            )
+            params.video_source = video_sources[selected_index][1]
+            config.app["video_source"] = params.video_source
+
+            if params.video_source == "local":
+                uploaded_files = st.file_uploader(
+                    "Upload Local Files",
+                    type=["mp4", "mov", "avi", "flv", "mkv", "jpg", "jpeg", "png"],
+                    accept_multiple_files=True,
+                )
 
         selected_index = st.selectbox(
             tr("Video Concat Mode"),

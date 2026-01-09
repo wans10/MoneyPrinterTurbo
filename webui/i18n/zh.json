@@ -127,6 +127,8 @@
     "AI video generation may take 30 seconds to several minutes per clip": "AI 视频生成可能需要 30 秒到数分钟每个片段",
     "Custom Position (% from top)": "自定义位置（从顶部算起的百分比）",
     "Please enter a value between 0 and 100": "请输入 0 到 100 之间的值",
-    "Please enter a valid number": "请输入有效的数字"
+    "Please enter a valid number": "请输入有效的数字",
+    "Upload Images for Image-to-Video (Optional)": "上传图片进行图生视频（可选）",
+    "Video Resolution": "视频分辨率"
   }
 }

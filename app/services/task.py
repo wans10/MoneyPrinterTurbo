@@ -1,7 +1,6 @@
 import math
-import os.path
+import os
 import re
-from os import path
 
 from loguru import logger
 
@@ -160,7 +159,62 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
 
 
 def get_video_materials(task_id, params, video_terms, audio_duration):
-    if params.video_source == "local":
+    # AI Video Generation via LLM Hub (Sora 2, Veo 3.1) - 优先处理
+    if params.video_gen_model and params.video_gen_model != "none":
+        logger.info(f"\n\n## generating videos with AI model: {params.video_gen_model}")
+        
+        # 检查是否有本地图片用于 Image-to-Video
+        image_paths = []
+        if params.video_source == "local" and params.video_materials:
+            # 筛选出图片文件
+            image_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+            for material in params.video_materials:
+                if material.url and os.path.exists(material.url):
+                    ext = os.path.splitext(material.url)[1].lower()
+                    if ext in image_extensions:
+                        image_paths.append(material.url)
+            
+            if image_paths:
+                logger.info(f"Found {len(image_paths)} images for Image-to-Video generation")
+        
+        # 准备提示词
+        prompts = _prepare_video_prompts(video_terms, params)
+        
+        # 如果有图片但没有提示词，为每张图片生成默认提示词
+        if image_paths and not prompts:
+            prompts = [f"Create a cinematic video from this image with smooth motion and dynamic effects" 
+                      for _ in image_paths]
+        # 如果提示词数量少于图片数量，复用最后一个提示词
+        elif image_paths and len(prompts) < len(image_paths):
+            last_prompt = prompts[-1] if prompts else "Create a cinematic video with smooth motion"
+            prompts.extend([last_prompt] * (len(image_paths) - len(prompts)))
+        
+        if not prompts:
+            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+            logger.error("no valid prompts for AI video generation.")
+            return None
+        
+        generated_videos = video_gen.generate_videos_from_prompts(
+            task_id=task_id,
+            prompts=prompts,
+            model=params.video_gen_model,
+            aspect=params.video_aspect,
+            duration=params.video_gen_duration or 5,
+            image_paths=image_paths if image_paths else None,
+            resolution=params.video_gen_resolution or "1080p",
+        )
+        
+        if not generated_videos:
+            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+            logger.error(
+                f"failed to generate videos with {params.video_gen_model}. "
+                "Please check your LLM Hub API key and account balance."
+            )
+            return None
+        return generated_videos
+    
+    # 本地素材（无 AI 生成）
+    elif params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
             materials=params.video_materials, clip_duration=params.video_clip_duration
@@ -173,34 +227,7 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             return None
         return [material_info.url for material_info in materials]
     
-    # AI Video Generation via LLM Hub (Sora 2, Veo 3.1)
-    elif params.video_gen_model and params.video_gen_model != "none":
-        logger.info(f"\n\n## generating videos with AI model: {params.video_gen_model}")
-        
-        # Convert video terms to generation prompts
-        prompts = _prepare_video_prompts(video_terms, params)
-        if not prompts:
-            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
-            logger.error("no valid prompts for AI video generation.")
-            return None
-        
-        generated_videos = video_gen.generate_videos_from_prompts(
-            task_id=task_id,
-            prompts=prompts,
-            model=params.video_gen_model,
-            aspect=params.video_aspect,
-            duration=params.video_gen_duration or 5,
-        )
-        
-        if not generated_videos:
-            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
-            logger.error(
-                f"failed to generate videos with {params.video_gen_model}. "
-                "Please check your LLM Hub API key and account balance."
-            )
-            return None
-        return generated_videos
-    
+    # 从 Pexels/Pixabay 下载
     else:
         logger.info(f"\n\n## downloading videos from {params.video_source}")
         downloaded_videos = material.download_videos(

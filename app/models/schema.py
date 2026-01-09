@@ -43,11 +43,26 @@ class VideoAspect(str, Enum):
 
 
 class VideoGenModel(str, Enum):
-    """AI 视频生成模型"""
-    none = "none"              # 不使用 AI 生成
-    sora_2 = "sora-2"          # OpenAI Sora 2
-    sora_2_pro = "sora-2-pro"  # OpenAI Sora 2 Pro
-    veo_3_1 = "veo-3.1"        # Google Veo 3.1
+    """AI 视频生成模型 - 仅作为类型提示，实际模型列表从 API 动态获取"""
+    none = "none"  # 不使用 AI 生成
+
+
+class VideoGenResolution(str, Enum):
+    """视频生成分辨率"""
+    r_480p = "480p"    # 854x480
+    r_720p = "720p"    # 1280x720
+    r_1080p = "1080p"  # 1920x1080
+    r_4k = "4k"        # 3840x2160
+    
+    def to_dimensions(self):
+        """返回 (宽, 高) 元组"""
+        mapping = {
+            "480p": (854, 480),
+            "720p": (1280, 720),
+            "1080p": (1920, 1080),
+            "4k": (3840, 2160),
+        }
+        return mapping.get(self.value, (1920, 1080))
 
 
 class _Config:
@@ -88,8 +103,9 @@ class VideoParams(BaseModel):
     video_source: Optional[str] = "pexels"
     
     # AI Video Generation Settings (via LLM Hub)
-    video_gen_model: Optional[str] = "none"  # none, sora-2, sora-2-pro, veo-3.1
+    video_gen_model: Optional[str] = "none"  # 从 API 动态获取模型列表
     video_gen_duration: Optional[int] = 5    # 5-20 seconds per AI-generated clip
+    video_gen_resolution: Optional[str] = "1080p"  # 480p, 720p, 1080p, 4k
     
     video_materials: Optional[List[MaterialInfo]] = (
         None  # Materials used to generate the video

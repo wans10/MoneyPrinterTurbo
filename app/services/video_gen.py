@@ -16,8 +16,105 @@ import requests
 from loguru import logger
 
 from app.config import config
-from app.models.schema import VideoGenModel, VideoAspect
+from app.models.schema import VideoGenModel, VideoAspect, VideoGenResolution
 from app.utils import utils
+
+
+# 缓存的模型列表
+_cached_video_models = None
+_cache_timestamp = 0
+_cache_ttl = 300  # 5 分钟缓存
+
+
+def get_available_video_models() -> List[dict]:
+    """
+    从 LLM Hub API 动态获取可用的视频生成模型列表
+    
+    Returns:
+        模型列表，每个模型包含 id, name, endpoint_type
+    """
+    global _cached_video_models, _cache_timestamp
+    
+    # 检查缓存
+    if _cached_video_models and (time.time() - _cache_timestamp) < _cache_ttl:
+        return _cached_video_models
+    
+    api_key = config.llmhub.get("api_key", "")
+    base_url = config.llmhub.get("base_url", "https://api.llmhub.com.cn/v1")
+    
+    if not api_key:
+        logger.warning("LLM Hub API key not configured, returning default models")
+        return _get_default_video_models()
+    
+    try:
+        response = requests.get(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            all_models = data.get("data", [])
+            
+            # 筛选视频生成模型
+            video_models = []
+            video_keywords = ["video", "sora", "veo", "wan", "kling", "pika", "runway"]
+            video_endpoints = ["openai-video", "gemini"]
+            
+            for model in all_models:
+                model_id = model.get("id", "").lower()
+                endpoints = model.get("supported_endpoint_types", [])
+                
+                # 检查是否是视频模型
+                is_video = any(kw in model_id for kw in video_keywords)
+                has_video_endpoint = any(ep in endpoints for ep in video_endpoints)
+                
+                # 排除图片生成模型 (t2i)
+                is_image_model = "t2i" in model_id or "image" in model_id
+                
+                if (is_video or has_video_endpoint) and not is_image_model:
+                    video_models.append({
+                        "id": model.get("id"),
+                        "name": _format_model_name(model.get("id")),
+                        "endpoint_type": endpoints[0] if endpoints else "openai-video",
+                    })
+            
+            if video_models:
+                _cached_video_models = video_models
+                _cache_timestamp = time.time()
+                logger.info(f"Fetched {len(video_models)} video models from API")
+                return video_models
+        
+        logger.warning(f"Failed to fetch models: {response.status_code}")
+    except Exception as e:
+        logger.warning(f"Error fetching video models: {e}")
+    
+    return _get_default_video_models()
+
+
+def _format_model_name(model_id: str) -> str:
+    """格式化模型 ID 为显示名称"""
+    name_mapping = {
+        "sora-2": "Sora 2",
+        "sora-2-pro": "Sora 2 Pro",
+        "veo-3.0-generate-001": "Veo 3.0",
+        "veo-3.0-fast-generate-001": "Veo 3.0 Fast",
+        "veo-3.1-generate-preview": "Veo 3.1",
+        "veo-3.1-fast-generate-preview": "Veo 3.1 Fast",
+        "wan2.6-t2v": "Wan 2.6",
+    }
+    return name_mapping.get(model_id, model_id)
+
+
+def _get_default_video_models() -> List[dict]:
+    """返回默认的视频模型列表"""
+    return [
+        {"id": "sora-2", "name": "Sora 2", "endpoint_type": "openai-video"},
+        {"id": "sora-2-pro", "name": "Sora 2 Pro", "endpoint_type": "openai-video"},
+        {"id": "veo-3.1-generate-preview", "name": "Veo 3.1", "endpoint_type": "gemini"},
+        {"id": "wan2.6-t2v", "name": "Wan 2.6", "endpoint_type": "openai-video"},
+    ]
 
 
 @dataclass
@@ -55,6 +152,16 @@ class VideoGenerator:
         elif aspect == VideoAspect.square or aspect == VideoAspect.square.value:
             return "1:1"
         return "9:16"
+    
+    def _convert_resolution(self, resolution: str) -> dict:
+        """转换分辨率为 API 参数"""
+        resolution_map = {
+            "480p": {"width": 854, "height": 480},
+            "720p": {"width": 1280, "height": 720},
+            "1080p": {"width": 1920, "height": 1080},
+            "4k": {"width": 3840, "height": 2160},
+        }
+        return resolution_map.get(resolution, resolution_map["1080p"])
 
     def generate(
         self,
@@ -62,8 +169,19 @@ class VideoGenerator:
         save_dir: str,
         aspect: VideoAspect = VideoAspect.portrait,
         duration: int = 5,
+        image_path: Optional[str] = None,
+        resolution: str = "1080p",
     ) -> Optional[VideoGenResult]:
-        """生成视频（子类需实现）"""
+        """生成视频（子类需实现）
+        
+        Args:
+            prompt: 文本提示词
+            save_dir: 保存目录
+            aspect: 视频宽高比
+            duration: 视频时长（秒）
+            image_path: 可选，用于 Image-to-Video 的图片路径
+            resolution: 视频分辨率 (480p, 720p, 1080p, 4k)
+        """
         raise NotImplementedError
 
 
@@ -76,10 +194,12 @@ class SoraVideoGenerator(VideoGenerator):
         save_dir: str,
         aspect: VideoAspect = VideoAspect.portrait,
         duration: int = 5,
+        image_path: Optional[str] = None,
+        resolution: str = "1080p",
     ) -> Optional[VideoGenResult]:
-        """使用 Sora 生成视频"""
+        """使用 Sora 生成视频（支持 Text-to-Video 和 Image-to-Video）"""
         # 1. 创建视频生成任务
-        job_id = self._create_job(prompt, aspect, duration)
+        job_id = self._create_job(prompt, aspect, duration, image_path, resolution)
         if not job_id:
             return None
 
@@ -96,17 +216,40 @@ class SoraVideoGenerator(VideoGenerator):
         return VideoGenResult(video_path=video_path, duration=duration, prompt=prompt)
 
     def _create_job(
-        self, prompt: str, aspect: VideoAspect, duration: int
+        self, prompt: str, aspect: VideoAspect, duration: int, 
+        image_path: Optional[str] = None, resolution: str = "1080p"
     ) -> Optional[str]:
         """创建视频生成任务"""
         url = f"{self.base_url}/videos"
         headers = self._get_headers()
+        res = self._convert_resolution(resolution)
         payload = {
             "model": self.model,
             "prompt": prompt,
             "duration": duration,
             "aspect_ratio": self._convert_aspect(aspect),
+            "width": res["width"],
+            "height": res["height"],
         }
+        
+        # 如果提供了图片，使用 Image-to-Video 模式
+        if image_path and os.path.exists(image_path):
+            logger.info(f"Using Image-to-Video mode with: {image_path}")
+            try:
+                import base64
+                with open(image_path, "rb") as f:
+                    image_data = base64.b64encode(f.read()).decode("utf-8")
+                # 获取图片 MIME 类型
+                ext = os.path.splitext(image_path)[1].lower()
+                mime_type = {
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".png": "image/png",
+                    ".webp": "image/webp",
+                }.get(ext, "image/jpeg")
+                payload["image"] = f"data:{mime_type};base64,{image_data}"
+            except Exception as e:
+                logger.warning(f"Failed to encode image, falling back to text-to-video: {e}")
 
         for attempt in range(self.max_retries):
             try:
@@ -252,10 +395,12 @@ class VeoVideoGenerator(VideoGenerator):
         save_dir: str,
         aspect: VideoAspect = VideoAspect.portrait,
         duration: int = 5,
+        image_path: Optional[str] = None,
+        resolution: str = "1080p",
     ) -> Optional[VideoGenResult]:
-        """使用 Veo 生成视频"""
+        """使用 Veo 生成视频（支持 Text-to-Video 和 Image-to-Video）"""
         # 1. 启动预测任务
-        operation_name = self._start_prediction(prompt, aspect, duration)
+        operation_name = self._start_prediction(prompt, aspect, duration, image_path, resolution)
         if not operation_name:
             return None
 
@@ -272,18 +417,39 @@ class VeoVideoGenerator(VideoGenerator):
         return VideoGenResult(video_path=video_path, duration=duration, prompt=prompt)
 
     def _start_prediction(
-        self, prompt: str, aspect: VideoAspect, duration: int
+        self, prompt: str, aspect: VideoAspect, duration: int, 
+        image_path: Optional[str] = None, resolution: str = "1080p"
     ) -> Optional[str]:
         """启动 Veo 预测任务"""
-        # Veo API 可能使用不同的端点格式
         url = f"{self.base_url}/videos/generate"
         headers = self._get_headers()
+        res = self._convert_resolution(resolution)
         payload = {
             "model": self.model,
             "prompt": prompt,
             "duration_seconds": duration,
             "aspect_ratio": self._convert_aspect(aspect),
+            "width": res["width"],
+            "height": res["height"],
         }
+        
+        # 如果提供了图片，使用 Image-to-Video 模式
+        if image_path and os.path.exists(image_path):
+            logger.info(f"Veo Image-to-Video mode with: {image_path}")
+            try:
+                import base64
+                with open(image_path, "rb") as f:
+                    image_data = base64.b64encode(f.read()).decode("utf-8")
+                ext = os.path.splitext(image_path)[1].lower()
+                mime_type = {
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".png": "image/png",
+                    ".webp": "image/webp",
+                }.get(ext, "image/jpeg")
+                payload["image"] = f"data:{mime_type};base64,{image_data}"
+            except Exception as e:
+                logger.warning(f"Failed to encode image for Veo: {e}")
 
         for attempt in range(self.max_retries):
             try:
@@ -412,7 +578,7 @@ def get_video_generator(model: str) -> Optional[VideoGenerator]:
     工厂函数：获取对应的视频生成器
 
     Args:
-        model: 模型名称 (sora-2, sora-2-pro, veo-3.1)
+        model: 模型名称 (sora-2, sora-2-pro, veo-3.1-generate-preview, veo-3.1-fast-generate-preview)
 
     Returns:
         对应的 VideoGenerator 实例，或 None
@@ -424,9 +590,9 @@ def get_video_generator(model: str) -> Optional[VideoGenerator]:
         logger.error("LLM Hub API key is not configured")
         return None
 
-    if model in ["sora-2", "sora-2-pro"]:
+    if model in ["sora-2", "sora-2-pro", "wan2.6-t2v"]:
         return SoraVideoGenerator(api_key, base_url, model)
-    elif model == "veo-3.1":
+    elif model in ["veo-3.0-generate-001", "veo-3.0-fast-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview"]:
         return VeoVideoGenerator(api_key, base_url, model)
 
     logger.error(f"Unknown video generation model: {model}")
@@ -439,9 +605,11 @@ def generate_videos_from_prompts(
     model: str = "sora-2",
     aspect: VideoAspect = VideoAspect.portrait,
     duration: int = 5,
+    image_paths: Optional[List[str]] = None,
+    resolution: str = "1080p",
 ) -> List[str]:
     """
-    根据提示词列表生成视频
+    根据提示词列表生成视频（支持 Text-to-Video 和 Image-to-Video）
 
     Args:
         task_id: 任务ID
@@ -449,6 +617,8 @@ def generate_videos_from_prompts(
         model: 视频生成模型
         aspect: 视频宽高比
         duration: 每个视频时长（秒）
+        image_paths: 可选，图片路径列表用于 Image-to-Video
+        resolution: 视频分辨率 (480p, 720p, 1080p, 4k)
 
     Returns:
         生成的视频文件路径列表
@@ -460,14 +630,26 @@ def generate_videos_from_prompts(
 
     video_paths = []
     save_dir = utils.task_dir(task_id)
+    
+    # 确保 image_paths 长度与 prompts 匹配或为空
+    images = image_paths or []
 
     for i, prompt in enumerate(prompts):
-        logger.info(f"Generating video {i + 1}/{len(prompts)}: {prompt[:50]}...")
+        # 获取对应的图片（如果有）
+        image_path = images[i] if i < len(images) else None
+        
+        if image_path:
+            logger.info(f"Generating video {i + 1}/{len(prompts)} from image: {os.path.basename(image_path)}")
+        else:
+            logger.info(f"Generating video {i + 1}/{len(prompts)}: {prompt[:50]}...")
+        
         result = generator.generate(
             prompt=prompt,
             save_dir=save_dir,
             aspect=aspect,
             duration=duration,
+            image_path=image_path,
+            resolution=resolution,
         )
 
         if result and result.video_path:
