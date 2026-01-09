@@ -58,7 +58,7 @@ def generate_terms(task_id, params, video_script):
 
 
 def save_script_data(task_id, video_script, video_terms, params):
-    script_file = path.join(utils.task_dir(task_id), "script.json")
+    script_file = os.path.join(utils.task_dir(task_id), "script.json")
     script_data = {
         "script": video_script,
         "search_terms": video_terms,
@@ -89,7 +89,7 @@ def generate_audio(task_id, params, video_script):
             )
         else:
             logger.info("no custom audio file provided, using TTS to generate audio.")
-        audio_file = path.join(utils.task_dir(task_id), "audio.mp3")
+        audio_file = os.path.join(utils.task_dir(task_id), "audio.mp3")
         sub_maker = voice.tts(
             text=video_script,
             voice_name=voice.parse_voice_name(params.voice_name),
@@ -132,7 +132,7 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     if not params.subtitle_enabled or sub_maker is None:
         return ""
 
-    subtitle_path = path.join(utils.task_dir(task_id), "subtitle.srt")
+    subtitle_path = os.path.join(utils.task_dir(task_id), "subtitle.srt")
     subtitle_provider = config.app.get("subtitle_provider", "edge").strip().lower()
     logger.info(f"\n\n## generating subtitle, provider: {subtitle_provider}")
 
@@ -278,7 +278,7 @@ def generate_final_videos(
     _progress = 50
     for i in range(params.video_count):
         index = i + 1
-        combined_video_path = path.join(
+        combined_video_path = os.path.join(
             utils.task_dir(task_id), f"combined-{index}.mp4"
         )
         logger.info(f"\n\n## combining video: {index} => {combined_video_path}")
@@ -296,7 +296,7 @@ def generate_final_videos(
         _progress += 50 / params.video_count / 2
         sm.state.update_task(task_id, progress=_progress)
 
-        final_video_path = path.join(utils.task_dir(task_id), f"final-{index}.mp4")
+        final_video_path = os.path.join(utils.task_dir(task_id), f"final-{index}.mp4")
 
         logger.info(f"\n\n## generating video: {index} => {final_video_path}")
         video.generate_video(
