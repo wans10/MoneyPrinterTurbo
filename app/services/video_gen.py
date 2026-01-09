@@ -387,7 +387,13 @@ class SoraVideoGenerator(VideoGenerator):
 
 
 class VeoVideoGenerator(VideoGenerator):
-    """Veo 3.1 视频生成器"""
+    """Veo 视频生成器 - 使用 LLM Hub 统一的 /videos 端点
+    
+    LLM Hub 提供统一 OpenAI 风格的 API 端点，内部会转换为 Google Gemini API 格式。
+    - 提交视频生成: POST /v1/videos/generate 或 POST /v1/videos
+    - 查询任务状态: GET /v1/videos/{taskID}
+    - 获取视频内容: GET /v1/videos/{taskID}/content
+    """
 
     def generate(
         self,
@@ -398,42 +404,43 @@ class VeoVideoGenerator(VideoGenerator):
         image_path: Optional[str] = None,
         resolution: str = "1080p",
     ) -> Optional[VideoGenResult]:
-        """使用 Veo 生成视频（支持 Text-to-Video 和 Image-to-Video）"""
-        # 1. 启动预测任务
-        operation_name = self._start_prediction(prompt, aspect, duration, image_path, resolution)
-        if not operation_name:
+        """使用 Veo 生成视频"""
+        # 1. 创建视频生成任务
+        task_id = self._create_task(prompt, aspect, duration, image_path, resolution)
+        if not task_id:
             return None
 
-        # 2. 轮询操作状态
-        video_data = self._poll_operation(operation_name)
-        if not video_data:
+        # 2. 轮询任务状态
+        video_ready = self._poll_task(task_id)
+        if not video_ready:
             return None
 
-        # 3. 保存视频
-        video_path = self._save_video(video_data, save_dir, operation_name)
+        # 3. 获取视频内容
+        video_path = self._get_video_content(task_id, save_dir)
         if not video_path:
             return None
 
         return VideoGenResult(video_path=video_path, duration=duration, prompt=prompt)
 
-    def _start_prediction(
+    def _create_task(
         self, prompt: str, aspect: VideoAspect, duration: int, 
         image_path: Optional[str] = None, resolution: str = "1080p"
     ) -> Optional[str]:
-        """启动 Veo 预测任务"""
-        url = f"{self.base_url}/videos/generate"
+        """创建视频生成任务 - POST /videos"""
+        url = f"{self.base_url}/videos"
         headers = self._get_headers()
         res = self._convert_resolution(resolution)
+        
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "duration_seconds": duration,
+            "duration": duration,
             "aspect_ratio": self._convert_aspect(aspect),
             "width": res["width"],
             "height": res["height"],
         }
         
-        # 如果提供了图片，使用 Image-to-Video 模式
+        # 如果提供了图片，添加 image 参数
         if image_path and os.path.exists(image_path):
             logger.info(f"Veo Image-to-Video mode with: {image_path}")
             try:
@@ -449,13 +456,11 @@ class VeoVideoGenerator(VideoGenerator):
                 }.get(ext, "image/jpeg")
                 payload["image"] = f"data:{mime_type};base64,{image_data}"
             except Exception as e:
-                logger.warning(f"Failed to encode image for Veo: {e}")
+                logger.warning(f"Failed to encode image: {e}")
 
         for attempt in range(self.max_retries):
             try:
-                logger.info(
-                    f"Starting Veo prediction (attempt {attempt + 1}): {prompt[:50]}..."
-                )
+                logger.info(f"Creating Veo video task (attempt {attempt + 1}): {prompt[:50]}...")
                 response = requests.post(
                     url,
                     headers=headers,
@@ -466,32 +471,26 @@ class VeoVideoGenerator(VideoGenerator):
 
                 if response.status_code in [200, 201, 202]:
                     data = response.json()
-                    op_name = (
-                        data.get("operation_name")
-                        or data.get("name")
-                        or data.get("id")
-                    )
-                    if op_name:
-                        logger.info(f"Veo prediction started: {op_name}")
-                        return op_name
+                    task_id = data.get("id") or data.get("task_id") or data.get("video_id")
+                    if task_id:
+                        logger.info(f"Veo video task created: {task_id}")
+                        return task_id
                     else:
-                        logger.error(f"No operation name in response: {data}")
+                        logger.error(f"No task ID in response: {data}")
                 else:
-                    logger.error(
-                        f"Failed to start prediction: {response.status_code} - {response.text}"
-                    )
+                    logger.error(f"Failed to create Veo task: {response.status_code} - {response.text}")
 
             except Exception as e:
-                logger.error(f"Error starting Veo prediction: {str(e)}")
+                logger.error(f"Error creating Veo video task: {str(e)}")
 
             if attempt < self.max_retries - 1:
                 time.sleep(2)
 
         return None
 
-    def _poll_operation(self, operation_name: str) -> Optional[bytes]:
-        """轮询操作状态并获取视频数据"""
-        url = f"{self.base_url}/operations/{operation_name}"
+    def _poll_task(self, task_id: str) -> bool:
+        """轮询任务状态 - GET /videos/{taskID}"""
+        url = f"{self.base_url}/videos/{task_id}"
         headers = self._get_headers()
         start_time = time.time()
 
@@ -506,69 +505,67 @@ class VeoVideoGenerator(VideoGenerator):
 
                 if response.status_code == 200:
                     data = response.json()
-                    done = data.get("done", False)
+                    status = data.get("status", "").lower()
 
-                    if done:
-                        result = data.get("result", {})
-                        video_url = result.get("video_url") or result.get("uri")
+                    if status in ["completed", "succeeded", "done"]:
+                        logger.success(f"Veo video ready: {task_id}")
+                        return True
 
-                        if video_url:
-                            # 下载视频
-                            video_response = requests.get(
-                                video_url,
-                                headers=headers,
-                                proxies=config.proxy,
-                                timeout=(30, 300),
-                            )
-                            if video_response.status_code == 200:
-                                logger.success(f"Veo video ready: {operation_name}")
-                                return video_response.content
-
-                        # 尝试从结果中直接获取视频数据
-                        video_bytes = result.get("video_bytes")
-                        if video_bytes:
-                            import base64
-                            return base64.b64decode(video_bytes)
-
-                        logger.error("No video data in completed operation")
-                        return None
+                    elif status in ["failed", "error"]:
+                        error = data.get("error", "Unknown error")
+                        logger.error(f"Veo video generation failed: {error}")
+                        return False
 
                     else:
-                        progress = data.get("metadata", {}).get("progress", "unknown")
-                        logger.info(f"Veo prediction in progress: {progress}")
+                        # queued, processing, pending 等状态
+                        progress = data.get("progress", "unknown")
+                        logger.info(f"Veo video in progress: {status} ({progress})")
 
+                elif response.status_code == 404:
+                    logger.error(f"Veo task not found: {task_id}")
+                    return False
                 else:
                     logger.warning(f"Poll request failed: {response.status_code}")
 
             except Exception as e:
-                logger.warning(f"Error polling operation: {str(e)}")
+                logger.warning(f"Error polling Veo task: {str(e)}")
 
             time.sleep(self.poll_interval)
 
-        logger.error(f"Veo prediction timed out after {self.max_poll_time}s")
-        return None
+        logger.error(f"Veo video task timed out after {self.max_poll_time}s")
+        return False
 
-    def _save_video(
-        self, video_data: bytes, save_dir: str, operation_name: str
-    ) -> Optional[str]:
-        """保存视频数据到文件"""
+    def _get_video_content(self, task_id: str, save_dir: str) -> Optional[str]:
+        """获取视频内容 - GET /videos/{taskID}/content"""
+        url = f"{self.base_url}/videos/{task_id}/content"
+        headers = self._get_headers()
+        
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-
-        # 清理操作名称作为文件名
-        safe_name = operation_name.replace("/", "_").replace("\\", "_")
-        video_path = os.path.join(save_dir, f"ai-gen-{safe_name}.mp4")
+        
+        video_path = os.path.join(save_dir, f"ai-gen-veo-{task_id[:8]}.mp4")
 
         try:
-            with open(video_path, "wb") as f:
-                f.write(video_data)
+            logger.info(f"Downloading Veo video content: {task_id}")
+            response = requests.get(
+                url,
+                headers=headers,
+                proxies=config.proxy,
+                timeout=(30, 300),
+            )
 
-            if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
-                logger.success(f"Video saved: {video_path}")
-                return video_path
+            if response.status_code == 200:
+                with open(video_path, "wb") as f:
+                    f.write(response.content)
+
+                if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
+                    logger.success(f"Veo video saved: {video_path}")
+                    return video_path
+            else:
+                logger.error(f"Failed to get video content: {response.status_code}")
 
         except Exception as e:
-            logger.error(f"Error saving video: {str(e)}")
+            logger.error(f"Error downloading Veo video: {str(e)}")
 
         return None
 
@@ -576,9 +573,13 @@ class VeoVideoGenerator(VideoGenerator):
 def get_video_generator(model: str) -> Optional[VideoGenerator]:
     """
     工厂函数：获取对应的视频生成器
+    
+    根据模型名称智能选择生成器：
+    - veo* 开头的模型使用 VeoVideoGenerator
+    - 其他模型使用 SoraVideoGenerator（OpenAI 兼容格式）
 
     Args:
-        model: 模型名称 (sora-2, sora-2-pro, veo-3.1-generate-preview, veo-3.1-fast-generate-preview)
+        model: 模型名称
 
     Returns:
         对应的 VideoGenerator 实例，或 None
@@ -590,13 +591,17 @@ def get_video_generator(model: str) -> Optional[VideoGenerator]:
         logger.error("LLM Hub API key is not configured")
         return None
 
-    if model in ["sora-2", "sora-2-pro", "wan2.6-t2v"]:
-        return SoraVideoGenerator(api_key, base_url, model)
-    elif model in ["veo-3.0-generate-001", "veo-3.0-fast-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview"]:
+    model_lower = model.lower()
+    
+    # Veo 系列模型使用 VeoVideoGenerator
+    if model_lower.startswith("veo"):
+        logger.info(f"Using VeoVideoGenerator for model: {model}")
         return VeoVideoGenerator(api_key, base_url, model)
-
-    logger.error(f"Unknown video generation model: {model}")
-    return None
+    
+    # 其他所有模型使用 SoraVideoGenerator（OpenAI 兼容格式）
+    # 包括：sora-*, wan*, kling*, pika*, runway* 等
+    logger.info(f"Using SoraVideoGenerator for model: {model}")
+    return SoraVideoGenerator(api_key, base_url, model)
 
 
 def generate_videos_from_prompts(
